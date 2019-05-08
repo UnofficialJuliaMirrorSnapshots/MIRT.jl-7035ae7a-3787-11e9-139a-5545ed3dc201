@@ -1,0 +1,189 @@
+# jim.jl
+
+using Plots
+using LaTeXStrings
+using MosaicViews
+using FFTViews
+
+# global default key/values
+jim_def = Dict([
+	:aspect_ratio => :equal,
+	:clim => [],
+	:color => :grays,
+	:ncol => 0,
+	:padval => 0,
+	:mosaic_npad => 1,
+	:title => "",
+	:xlabel => "",
+	:ylabel => "",
+	:fft0 => false,
+	:yflip => nothing, # defer to minimum value of y - see default below
+	:abswarn => true, # warn when taking abs of complex images?
+	])
+
+
+"""
+`jim(z, ...)`
+
+jiffy image display of `x` using `heatmap`
+
+in
+* `z` image, can be 2D or higher, if higher then it uses `mosaicviews`
+
+option
+* `aspect_ratio` for heatmap; default `:equal`
+* `clim` for heatmap; default `(minimum(z),maximum(z))`
+* `color` colormap; default `:grays`
+* `ncol` for mosaicview for 3D and higher arrays; default `0` does auto select
+* `padval` padding value for mosaic view; default `minimum(z)`
+* `mosaic_npad` # of pixel padding for mosaic view; default 1
+* `fft0` if true use FFTView to display; default false
+* `title` for heatmap; default `""`
+* `xlabel` for heatmap; default `""`
+* `ylabel` for heatmap; default `""`
+* `yflip` for heatmap; default `true` if minimum(y) >= 0
+* `x` for x axis; default `1:size(z,1)`
+* `y` for y axis; default `1:size(z,2)`
+* `xtick` for heatmap; default `[minimum(x),maximum(x)]`
+* `ytick` for heatmap; default `[minimum(y),maximum(y)]`
+
+out
+* returns plot handle
+
+
+2019-02-23 Jeff Fessler, University of Michigan
+"""
+function jim(z;
+	aspect_ratio = jim_def[:aspect_ratio],
+	clim = jim_def[:clim],
+	color = jim_def[:color],
+	ncol::Integer = jim_def[:ncol],
+	padval = jim_def[:padval],
+	mosaic_npad::Integer = jim_def[:mosaic_npad],
+	title = jim_def[:title],
+	xlabel = jim_def[:xlabel],
+	ylabel = jim_def[:ylabel],
+	fft0::Bool = jim_def[:fft0],
+	x = fft0 ? Int.(-size(z,1)/2:size(z,1)/2-1) : (1:size(z,1)),
+	y = fft0 ? Int.(-size(z,2)/2:size(z,2)/2-1) : (1:size(z,2)),
+	xtick = (minimum(x) < 0 && maximum(x) > 0) ?
+		 [minimum(x),0,maximum(x)] : [minimum(x),maximum(x)],
+	ytick = (minimum(y) < 0 && maximum(y) > 0) ?
+		 [minimum(y),0,maximum(y)] : [minimum(y),maximum(y)],
+	yflip::Bool = jim_def[:yflip] == nothing ? minimum(y) >= 0 : jim_def[:yflip],
+	abswarn::Bool = jim_def[:abswarn],
+	)
+
+	if !isreal(z)
+		if abswarn
+			@warn "magnitude"
+		end
+		z = abs.(z)
+	end
+
+	if isempty(clim) # must wait until after possible abs() to do this
+		clim = (minimum(z), maximum(z))
+	end
+
+	if isempty(padval) # must wait until after possible abs() to do this
+		padval = minimum(z)
+	end
+
+	xy = (x, y)
+	if ndims(z) > 2
+		if ncol == 0
+			ncol = Int(floor(sqrt(prod(size(z)[3:end]))))
+		end
+		z = mosaicview(z, padval, ncol=ncol, npad=mosaic_npad)
+		xy = () # no x,y for mosaic
+	elseif fft0
+		z = FFTView(z)[x,y]
+	end
+
+heatmap(xy..., z', transpose=false,
+	aspect_ratio=aspect_ratio,
+	clim=clim,
+	color=color,
+	title=title,
+	yflip=yflip,
+	xlabel=xlabel,
+	ylabel=ylabel,
+	xtick=xtick,
+	ytick=ytick)
+
+end # jim
+
+
+"""
+`jim(z, title; kwargs...)`
+"""
+function jim(z, title::Union{String,LaTeXString}; kwargs...)
+	return jim(z; title=title, kwargs...)
+end
+
+
+"""
+`jim(x, y, z; kwargs...)`
+"""
+function jim(x, y, z; kwargs...)
+	return jim(z; x=x, y=y, kwargs...)
+end
+
+
+"""
+`jim(x, y, z, title; kwargs...)`
+"""
+function jim(x, y, z, title::Union{String,LaTeXString}; kwargs...)
+	return jim(z; x=x, y=y, title=title, kwargs...)
+end
+
+
+# show docstring if user calls it with no arguments
+function jim()
+	@doc jim
+end
+
+
+#"""
+#`jim(abswarn=false)`
+#"""
+#function jim(; abswarn::Bool=jim_state_abswarn)
+#	global jim_state_abswarn = abswarn
+#end
+
+"""
+`jim(key, value)` set default value for one of the keys
+"""
+function jim(key::Symbol, value)
+	global jim_def
+	if !haskey(jim_def, key)
+		error("no key $key")
+	end
+	jim_def[key] = value
+end
+
+
+"""
+`jim(:test)`
+
+`jim(:keys)` return default keys
+
+`jim(:defs)` return Dict of default keys / vals
+"""
+function jim(test::Symbol)
+	global jim_def
+	if test == :keys
+		return keys(jim_def)
+	end
+	if test == :defs
+		return jim_def
+	end
+	@assert test == :test
+	jim(:abswarn, false)
+	jim(ones(4,3), title="test2")
+	jim(ones(4,3,5), title="test3")
+	jim(1:4, 5:9, zeros(4,5), title="test3")
+	jim(zeros(4,5), x=1:4, y=5:9, title="test3")
+	jim(x=1:4, y=5:9, rand(4,5), title="test4")
+	true
+end
