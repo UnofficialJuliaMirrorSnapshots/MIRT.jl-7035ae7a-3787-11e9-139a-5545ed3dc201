@@ -1,9 +1,13 @@
 # jim.jl
+# jiffy image display
+# 2019-02-23 Jeff Fessler, University of Michigan
 
-using Plots
+using Plots: heatmap
+using Plots: ColorGradient
 using LaTeXStrings
 using MosaicViews
 using FFTViews
+using Colors: HSV
 
 # global default key/values
 jim_def = Dict([
@@ -93,6 +97,11 @@ function jim(z::AbstractArray{<:Real};
 		z = FFTView(z)[x,y]
 	end
 
+	# attempt an HSV colormap for phase images
+	if color == :hsv
+		color = ColorGradient([HSV(h,1,1) for h=LinRange(0,350,351)])
+	end
+
 	heatmap(xy..., z', transpose=false,
 		aspect_ratio=aspect_ratio,
 		clim=clim,
@@ -115,7 +124,7 @@ function jim(z::AbstractArray{<:Number};
 
 	if !(eltype(z) <: Real)
 		if abswarn
-			@warn "magnitude"
+			@warn "magnitude at $(caller_name())"
 		end
 		z = abs.(z)
 	end
@@ -165,9 +174,7 @@ end
 """
 function jim(key::Symbol, value)
 	global jim_def
-	if !haskey(jim_def, key)
-		error("no key $key")
-	end
+	!haskey(jim_def, key) && throw(ArgumentError("no key $key"))
 	jim_def[key] = value
 end
 
@@ -188,12 +195,16 @@ function jim(test::Symbol)
 		return jim_def
 	end
 	test != :test && throw("symbol $test")
+	jim()
+	jim(:keys)
+	jim(:defs)
 	jim(:abswarn, false)
 	jim(ones(4,3), title="test2")
 	jim(ones(4,3,5), title="test3")
 	jim(1:4, 5:9, zeros(4,5), title="test3")
 	jim(zeros(4,5), x=1:4, y=5:9, title="test3")
 	jim(x=1:4, y=5:9, rand(4,5), title="test4")
+	jim(rand(4,5), color=:hsv)
 	jim(complex(rand(4,3)))
 	jim(complex(rand(4,3)), "complex")
 	true
