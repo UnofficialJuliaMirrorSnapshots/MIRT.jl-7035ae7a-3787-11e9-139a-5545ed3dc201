@@ -4,6 +4,8 @@ sinogram geometry for 2D tomographic image reconstruction
 2019-07-01, Jeff Fessler, University of Michigan
 =#
 
+export MIRT_sino_geom, sino_geom
+
 # using MIRT: jim, image_geom, MIRT_image_geom
 using Plots: Plot, plot!, plot, scatter!, gui
 using Test: @test, @test_throws
@@ -34,15 +36,16 @@ end
 """
 `sino_geom_help()`
 """
-function sino_geom_help()
-    print("propertynames:\n")
-    print(propertynames(sino_geom(:par)))
+function sino_geom_help( ; io::IO = isinteractive() ? stdout : IOBuffer() )
+    print(io, "propertynames:\n")
+    print(io, propertynames(sino_geom(:par)))
 
+    print(io,
 	"
 	Derived values
 
 	sg.dim			dimensions: (nb,na)
-	sg.d			radial sample spacing, aka ds or dr
+	sg.ds|dr		radial sample spacing (NaN for :moj)
 	sg.s			[nb] s sample locations
 	sg.w			(nb-1)/2 + offset ('middle' sample position)
 	sg.ad			source angles [degrees]
@@ -52,6 +55,7 @@ function sino_geom_help()
 	sg.rfov			radial fov
 	sg.xds			[nb] center of detector elements (beta=0)
 	sg.yds			[nb] ''
+	sg.grid			(rg, phigrid) [nb na] parallel-beam coordinates
 
 	For mojette:
 
@@ -70,7 +74,7 @@ function sino_geom_help()
 	sg.unitv(;ib,ia)	unit 'vector' with single nonzero element
 	sg.taufun(x,y)		projected s/ds for each (x,y) pair [numel(x) na]
 	sg.plot(;ig)		plot system geometry (most useful for fan)
-	\n"
+	\n")
 end
 
 
@@ -166,6 +170,24 @@ end
 
 
 """
+`sg = sino_geom_over(sg, over::Integer)`
+over-sample in "radial" dimension
+Probably not meaningful for mojette sampling because d=dx.
+"""
+function sino_geom_over(sg::MIRT_sino_geom, over::Integer)
+	if over == 1
+		return sg
+	end
+
+	return MIRT_sino_geom(sg.how, sg.units,
+		sg.nb * over, sg.na, sg.d / over,
+		sg.orbit, sg.orbit_start, sg.offset * over,
+		sg.strip_width / over,
+		sg.source_offset, sg.dsd, sg.dod, sg.dfs)
+end
+
+
+"""
 `sg = sino_geom_fan()`
 """
 function sino_geom_fan( ;
@@ -184,6 +206,8 @@ function sino_geom_fan( ;
 		dfs::Real = 0,		# dis_foc_src (3rd gen CT)
 		down::Integer = 1,
 	)
+
+	dfs != 0 && !isinf(dfs) && throw("dfs $dfs") # must be 0 or Inf
 
 	if orbit == :short # trick
 		sg_tmp = MIRT_sino_geom(:fan, units,
@@ -247,6 +271,15 @@ function sino_geom_moj( ;
 end
 
 
+"gamma for general finite dfs (rarely used)"
+function sino_geom_gamma_dfs(sg)
+	dis_foc_det = sg.dfs + sg.dsd
+	alf = sg.s / dis_foc_det
+	atan.(dis_foc_det * sin.(alf), dis_foc_det * cos.(alf) .- sg.dfs)
+	# equivalent to s/dsd when dfs=0
+end
+
+
 """
 `sino_geom_gamma()`
 gamma sample values for :fan
@@ -254,7 +287,7 @@ gamma sample values for :fan
 function sino_geom_gamma(sg)
 	return	sg.dfs == 0 ? sg.s / sg.dsd : # 3rd gen: equiangular
 			isinf(sg.dfs) ? atan.(sg.s / sg.dsd) : # flat
-			throw("bad dfs $(sg.dfs)")
+			sino_geom_gamma_dfs(sg) # general
 end
 
 
@@ -290,11 +323,11 @@ function sino_geom_taufun(sg, x, y)
 			tau = sg.dsd / sg.ds * atan.(tangam)
 		elseif isinf(sg.dfs) # flat
 			tau = sg.dsd / sg.ds * tangam
-		else
-			throw("bad dfs $(sg.dfs)")
+#		else
+#			throw("bad dfs $(sg.dfs)")
 		end
-	else
-		throw("bad how $(sg.how)")
+#	else
+#		throw("bad how $(sg.how)")
 	end
 	return tau
 end
@@ -315,11 +348,11 @@ function sino_geom_xds(sg)
 			xds = sg.dsd * sin.(gam)
 		elseif isinf(sg.dfs) # flat
 			xds = sg.s
-		else
-			throw("bad dfs $(sg.dfs))")
+	#	else
+	#		throw("bad dfs $(sg.dfs))")
 		end
-	else
-		throw("bad how $(sg.how)")
+#	else
+#		throw("bad how $(sg.how)")
 	end
 	return xds .+ sg.source_offset
 end
@@ -341,11 +374,11 @@ function sino_geom_yds(sg)
 			yds = sg.dso .- sg.dsd * cos.(gam)
 		elseif isinf(sg.dfs) # flat
 			yds = fill(-sg.dod, sg.nb)
-		else
-			throw("bad dfs $(sg.dfs))")
+	#	else
+	#		throw("bad dfs $(sg.dfs))")
 		end
-	else
-		throw("bad how $(sg.how)")
+#	else
+#		throw("bad how $(sg.how)")
 	end
 	return yds
 end
@@ -364,6 +397,38 @@ function sino_geom_unitv(sg::MIRT_sino_geom;
 end
 
 
+"""
+`(rg, ϕg) = sino_geom_grid(sg::MIRT_sino_geom)`
+
+Return grids `rg` and `ϕg` (in radians) of size `[nb na]`
+of equivalent *parallel-beam* `(r,ϕ)` (radial, angular) sampling positions,
+for any sinogram geometry.
+For parallel beam this is just `ndgrid(sg.r, sg.ar)`
+but for fan beam and mojette this involves more complicated computations.
+"""
+function sino_geom_grid(sg::MIRT_sino_geom)
+
+	if sg.how == :par
+		return ndgrid(sg.r, sg.ar)
+
+	elseif sg.how == :fan
+		gamma = sg.gamma
+		rad = sg.dso * sin.(gamma) + sg.source_offset * cos.(gamma)
+		rg = repeat(rad, 1, sg.na) # [nb na]
+		return (rg, gamma .+ sg.ar') # [nb na] phi = gamma + beta
+	end
+
+	# otherwise :moj (mojette)
+	phi = sg.ar
+	# trick: ray_spacing aka ds comes from dx which is sg.d for mojette
+	wb = (sg.nb - 1)/2 + sg.offset
+	dt = sg.d * max(abs.(cos.(phi)), abs.(sin.(phi))) # [na]
+	pos = ((0:(sg.nb-1)) .- wb) * dt' # [nb na]
+@show extrema(pos)
+	return (pos,  repeat(phi', sg.nb, 1))
+end
+
+
 function Base.display(sg::MIRT_sino_geom)
 	ir_dump(sg)
 end
@@ -372,15 +437,15 @@ end
 # Extended properties
 
 sino_geom_fun0 = Dict([
-    (:help, sg -> print(sino_geom_help())),
+    (:help, sg -> sino_geom_help()),
 
 	(:dim, sg -> (sg.nb, sg.na)),
 	(:w, sg -> (sg.nb-1)/2 + sg.offset),
 	(:ones, sg -> ones(Float32, sg.dim)),
 	(:zeros, sg -> zeros(Float32, sg.dim)),
 
-	(:dr, sg -> sg.d),
-	(:ds, sg -> sg.d),
+	(:dr, sg -> sg.how == :moj ? NaN : sg.d),
+	(:ds, sg -> sg.how == :moj ? NaN : sg.d),
 	(:r, sg -> sg.d * ((0:sg.nb-1) .- sg.w)),
 	(:s, sg -> sg.r), # sample locations ('radial')
 
@@ -394,6 +459,7 @@ sino_geom_fun0 = Dict([
 	(:xds, sg -> sino_geom_xds(sg)),
 	(:yds, sg -> sino_geom_yds(sg)),
 	(:dso, sg -> sg.dsd - sg.dod),
+	(:grid, sg -> sino_geom_grid(sg)),
 
 	# angular dependent d for :moj
 	(:d_ang, sg -> sg.d * max.(abs.(cos.(sg.ar)), abs.(sin.(sg.ar)))),
@@ -405,7 +471,8 @@ sino_geom_fun0 = Dict([
 
 	# functions that return new geometry:
 
-    (:down, sg -> (down::Int -> downsample(sg, down)))
+    (:down, sg -> (down::Int -> downsample(sg, down))),
+    (:over, sg -> (over::Int -> sino_geom_over(sg, over))),
 
 	])
 
@@ -543,6 +610,7 @@ function sino_geom_test( ; kwarg...)
 		sg.ad[2]
 		sg.rfov
 		sd = sg.down(2)
+		su = sg.over(2)
 		sg.dim
 		sg.w
 		sg.ones
@@ -560,6 +628,7 @@ function sino_geom_test( ; kwarg...)
 		sg.yds
 		sg.dfs
 		sg.dso
+		sg.grid
 
 		sg.d_ang # angular dependent d for :moj
 
@@ -579,6 +648,6 @@ function sino_geom_test( ; kwarg...)
 	sino_geom(:show)
 
 	@test_throws String sino_geom(:badhow)
-
+	@test_throws String sino_geom(:ge1, dfs=-1)
 	true
 end

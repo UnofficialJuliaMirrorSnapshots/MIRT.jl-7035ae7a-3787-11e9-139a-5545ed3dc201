@@ -1,5 +1,11 @@
 In reverse chronological order
 
+2019-07-12
+add `ellipsoid_im` `ellipse_sino` `rect_sino`
+
+2019-07-07
+add `Afft`
+
 2019-07-02
 add `cuboid_im` `sino_geom`
 

@@ -1,6 +1,9 @@
 # rect_im.jl
 
+export rect_im
+
 using Plots
+# using MIRT: jim, MIRT_image_geom, downsample2
 
 
 """
@@ -12,21 +15,21 @@ generate rectangle phantom image from parameters:
  `[x_center y_center x_width y_width angle_degrees amplitude]`
 
 in
-* `ig`				`image_geom()` object
-* `params`			`[Nrect,6]` rect parameters. if empty use default
+- `ig`				`image_geom()` object
+- `params`			`[Nrect,6]` rect parameters. if empty use default
 
 options
-* `oversample::Integer`	oversampling factor, for grayscale boundaries
-* `hu_scale::Real`		use 1000 to scale
-* `fov::Real`			default `maximum(ig.fovs)`
-* `chat::Bool`			verbosity?
-* `how::Symbol`			`:fast` or `:slow`; default `:auto`
-* `replace::Bool`		default `false`
-* `return_params::Bool`	if true, return both phantom and params
+- `oversample::Integer`	oversampling factor, for grayscale boundaries
+- `hu_scale::Real`		use 1000 to scale
+- `fov::Real`			default `maximum(ig.fovs)`
+- `chat::Bool`			verbosity?
+- `how::Symbol`			`:fast` or `:slow`; default `:auto`
+- `replace::Bool`		default `false`
+- `return_params::Bool`	if true, return both phantom and params
 
 out
-* `phantom`		`[nx ny]` image (Float32)
-* `params`		`[Nrect 6]` rect parameters (only return if `return_params=true`)
+- `phantom`		`[nx ny]` image (Float32)
+- `params`		`[Nrect 6]` rect parameters (only return if `return_params=true`)
 """
 function rect_im(ig::MIRT_image_geom,
 		params::AbstractArray{<:Real,2};
@@ -248,16 +251,16 @@ default parameters
 function rect_im_default_parameters(xfov, yfov)
 	f = 1/64
 	params = [
-		0     0     50     50     0     1
-		10    -16	25	   16	  0	    -0.5
-		-13	  15	13	   13	  1*45  1
-		-18   0     1      1      0     1
-		-12   0     1      1      0     1
-		-6    0     1      1      0     1
-		0     0     1      1      0     1
-		6     0     1      1      0     1
-		12    0     1      1      0     1
-		18    0     1      1      0     1
+		0	0	50	50	0	1
+		10	-16	25	16	0	-0.5
+		-13	15	13	13	1*45	1
+		-18	0	1	1	0	1
+		-12	0	1	1	0	1
+		-6	0	1	1	0	1
+		0	0	1	1	0	1
+		6	0	1	1	0	1
+		12	0	1	1	0	1
+		18	0	1	1	0	1
 	]
 
 	params[:,[1,3]] .*= xfov/64 # x_center and x_width
@@ -360,7 +363,9 @@ function rect_im(test::Symbol)
 	ig = image_geom(nx=2^8, dx=3)
 	@test_throws String rect_im(ig, :bad)
 	rect_im(ig, :smiley, how=:fast, replace=true)
+	rect_im(ig, how=:slow, replace=true)
 	rect_im(32, ny=30, dx=3, params=:default, how=:slow, return_params=true)
+	rect_im(32, ny=30)
 	@test_throws String rect_im(32, :default, how=:bad)
 	rect_im(:show)
 	@test rect_im_test()
