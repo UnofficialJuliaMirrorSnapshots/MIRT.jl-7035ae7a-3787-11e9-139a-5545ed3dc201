@@ -37,11 +37,11 @@ end
 `sino_geom_help()`
 """
 function sino_geom_help( ; io::IO = isinteractive() ? stdout : IOBuffer() )
-    print(io, "propertynames:\n")
-    print(io, propertynames(sino_geom(:par)))
+	print(io, "$(basename(@__FILE__)) propertynames:\n\t")
+	print(io, Tuple(sort([propertynames(sino_geom(:par))...])))
 
-    print(io,
-	"
+	print(io,
+	"\n
 	Derived values
 
 	sg.dim			dimensions: (nb,na)
@@ -56,6 +56,7 @@ function sino_geom_help( ; io::IO = isinteractive() ? stdout : IOBuffer() )
 	sg.xds			[nb] center of detector elements (beta=0)
 	sg.yds			[nb] ''
 	sg.grid			(rg, phigrid) [nb na] parallel-beam coordinates
+	sg.plot_grid	plot sg.grid
 
 	For mojette:
 
@@ -89,36 +90,38 @@ Using this structure facilitates "object oriented" code.
 (Use `ct_geom()` instead for 3D axial or helical cone-beam CT.)
 
 in
-* `how::Symbol`	`:fan` (fan-beam) | `:par` (parallel-beam) | `:moj` (mojette)
+- `how::Symbol`	`:fan` (fan-beam) | `:par` (parallel-beam) | `:moj` (mojette)
 		or `:test` to run a self-test
 
 options for all geometries (including parallel-beam):
-* `units::Symbol`	e.g. `:cm` or `:mm`; default: :none
-* `orbit_start`		default: 0
-* `orbit`			[degrees] default: `180` for parallel / mojette
+- `units::Symbol`	e.g. `:cm` or `:mm`; default: :none
+- `orbit_start`		default: 0
+- `orbit`			[degrees] default: `180` for parallel / mojette
 					and `360` for fan
 					can be `:short` for fan-beam short scan
-* `down::Int`		down-sampling factor, for testing
+- `down::Int`		down-sampling factor, for testing
 
-* `nb`				# radial samples cf `nr` (i.e., `ns` for `:fan`)
-* `na`				# angular samples (cf `nbeta` for `:fan`)
-* `d`				radial sample spacing; cf `dr` or `ds`; default 1
+- `nb`				# radial samples cf `nr` (i.e., `ns` for `:fan`)
+- `na`				# angular samples (cf `nbeta` for `:fan`)
+- `d`				radial sample spacing; cf `dr` or `ds`; default 1
 					for mojette this is actually `dx`
-* `offset`			cf `offset_r` `channel_offset` unitless; default 0
+- `offset`			cf `offset_r` `channel_offset` unitless; default 0
 			(relative to centerline between two central channels).
 			Use 0.25 or 1.25 for "quarter-detector offset"
-* `strip_width`		detector width; default: `d`
+- `strip_width`		detector width; default: `d`
 
 options for fan-beam
-* `source_offset`		same units as d; use with caution! default 0
+- `source_offset`		same units as d; use with caution! default 0
 fan beam distances:
-* `dsd`		cf 'dis_src_det'	default: Inf (parallel beam)
-* `dod`		cf 'dis_iso_det'	default: 0
-* `dfs`		cf 'dis_foc_src'	default: 0 (3rd generation CT arc),
-				use Inf for flat detector
+- `dsd`		cf `dis_src_det`	default: `Inf` (parallel beam)
+- `dod`		cf `dis_iso_det`	default: `0`
+- `dfs`		cf `dis_foc_src`	default: `0` (3rd generation CT arc),
+				use `Inf` for flat detector
 
 out
-* `sg::MIRT_sino_geom`	initialized structure
+- `sg::MIRT_sino_geom`	initialized structure
+
+Other options: `:test` `:help` `:plot_grids` `:show`
 
 Jeff Fessler, University of Michigan
 """
@@ -126,8 +129,12 @@ function sino_geom(how::Symbol; kwarg...)
 	if how == :test
 		@test sino_geom_test( ; kwarg...)
 		return true
+	elseif how == :help
+		sino_geom_help(); return nothing
+	elseif how == :plot_grids
+		return sino_geom_plot_grids()
 	elseif how == :show
-		return sino_geom_plot(sino_geom(:ge1); kwarg...)
+		return sino_geom_show( ; kwarg...)
 	elseif how == :par
 		sg = sino_geom_par( ; kwarg...)
 	elseif how == :fan
@@ -298,7 +305,7 @@ radial FOV
 function sino_geom_rfov(sg)
 	return	sg.how == :par ? maximum(abs.(sg.r)) :
 			sg.how == :fan ? sg.dso * sin(sg.gamma_max) :
-			sg.how == :moj ? maximum(abs.(sg.r)) : # todo: check
+			sg.how == :moj ? sg.nb/2 * minimum(sg.d_ang) : # todo: check
 				throw("bad how $(sg.how)")
 end
 
@@ -422,10 +429,9 @@ function sino_geom_grid(sg::MIRT_sino_geom)
 	phi = sg.ar
 	# trick: ray_spacing aka ds comes from dx which is sg.d for mojette
 	wb = (sg.nb - 1)/2 + sg.offset
-	dt = sg.d * max(abs.(cos.(phi)), abs.(sin.(phi))) # [na]
+	dt = sg.d_ang # [na]
 	pos = ((0:(sg.nb-1)) .- wb) * dt' # [nb na]
-@show extrema(pos)
-	return (pos,  repeat(phi', sg.nb, 1))
+	return (pos, repeat(phi', sg.nb, 1))
 end
 
 
@@ -437,7 +443,7 @@ end
 # Extended properties
 
 sino_geom_fun0 = Dict([
-    (:help, sg -> sino_geom_help()),
+	(:help, sg -> sino_geom_help()),
 
 	(:dim, sg -> (sg.nb, sg.na)),
 	(:w, sg -> (sg.nb-1)/2 + sg.offset),
@@ -460,6 +466,7 @@ sino_geom_fun0 = Dict([
 	(:yds, sg -> sino_geom_yds(sg)),
 	(:dso, sg -> sg.dsd - sg.dod),
 	(:grid, sg -> sino_geom_grid(sg)),
+	(:plot_grid, sg -> sino_geom_plot_grid(sg)),
 
 	# angular dependent d for :moj
 	(:d_ang, sg -> sg.d * max.(abs.(cos.(sg.ar)), abs.(sin.(sg.ar)))),
@@ -471,8 +478,8 @@ sino_geom_fun0 = Dict([
 
 	# functions that return new geometry:
 
-    (:down, sg -> (down::Int -> downsample(sg, down))),
-    (:over, sg -> (over::Int -> sino_geom_over(sg, over))),
+	(:down, sg -> (down::Int -> downsample(sg, down))),
+	(:over, sg -> (over::Int -> sino_geom_over(sg, over))),
 
 	])
 
@@ -485,6 +492,47 @@ Base.getproperty(sg::MIRT_sino_geom, s::Symbol) =
 
 Base.propertynames(sg::MIRT_sino_geom) =
 	(fieldnames(typeof(sg))..., keys(sino_geom_fun0)...)
+
+
+"""
+`sino_geom_plot_grid()`
+scatter plot of (r,phi) sampling locations from `sg.grid`
+"""
+function sino_geom_plot_grid(sg::MIRT_sino_geom)
+	(r, phi) = sg.grid
+	dfs = sg.how == :fan ? " dfs=$(sg.dfs)" : ""
+	ylim = [min(0, rad2deg(minimum(phi))), max(360, rad2deg(maximum(phi)))]
+	scatter(r, rad2deg.(phi), label="", markersize=1, ylim = ylim,
+		title="$(sg.how)$dfs", ytick=[0,360])
+end
+
+
+"""
+`sino_geom_plot_grids()`
+scatter plot of (r,phi) sampling locations for all geometries
+"""
+function sino_geom_plot_grids( ; orbit::Real = 360, down::Integer = 30)
+	geoms = (
+		sino_geom(:par, nb = 888, na = 984, down=down, d = 0.5, orbit=orbit,
+			offset = 0.25),
+		sino_geom(:fan, nb = 888, na = 984, d = 1.0, orbit = orbit,
+			offset = 0.75, dsd = 949, dod = 408, down=down),
+		sino_geom(:fan, nb = 888, na = 984, d = 1.0, orbit = orbit,
+			offset = 0.75, dsd = 949, dod = 408, down=down,
+			dfs = Inf, source_offset = 0.7), # flat fan
+		sino_geom(:moj, nb = 888, na = 984, down=down, d = 1.0, orbit=orbit,
+			offset = 0.25),
+	)
+
+	ngeom = length(geoms)
+	pl = Array{Plot}(undef, ngeom)
+
+	for ii=1:ngeom
+		sg = geoms[ii]
+		pl[ii] = sg.plot_grid
+	end
+	plot(pl...)
+end
 
 
 """
@@ -502,55 +550,50 @@ function sino_geom_plot(sg; ig::Union{Nothing,MIRT_image_geom}=nothing)
 	end
 	plot!([xmax, xmin, xmin, xmax, xmax],
 		[ymax, ymax, ymin, ymin, ymax], color=:green, label="")
-	plot!(xtick=round.([xmin, 0, xmax], digits=2))
+	plot!(xtick=round.([xmin, 0, xmax], digits=0))
 	plot!(ytick=round.([ymin, 0, ymax], digits=2))
 
-	t = LinRange(0,2*pi,1001)
-	rmax = maximum(abs.(sg.r))
+	t = LinRange(0, 2*pi, 1001)
+	rfov = sg.rfov
 	scatter!([0], [0], marker=:circle, label="")
-	plot!(rmax * cos.(t), rmax * sin.(t), label="") # fov circle
-	plot!(xlabel="x", ylabel="y", title = "$(sg.how): fov = $(sg.rfov)")
+	plot!(rfov * cos.(t), rfov * sin.(t), color=:magenta, label="") # rfov circle
+	rfov = round(sg.rfov, digits=1)
+	plot!(xlabel="x", ylabel="y", title = "$(sg.how): rfov = $rfov")
 
-#	if sg.how == :par
-#	end
+#=
+	if sg.how == :par
+	end
+=#
 
 	if sg.how == :fan
 		x0 = 0
 		y0 = sg.dso
-		t = LinRange(0,2*pi,100)
+		t = LinRange(0, 2*pi, 100)
 		rot = sg.ar[1]
 		rot = [cos(rot) -sin(rot); sin(rot) cos(rot)]
 		p0 = rot * [x0; y0]
-		pd = rot * [sg.xds'; sg.yds']
+		pd = rot * [sg.xds'; sg.yds'] # detector points
 
 		tmp = sg.ar .+ pi/2 # trick: angle beta defined ccw from y axis
 		scatter!([p0[1]], [p0[2]], color=:yellow, label="") # source
 		plot!(sg.dso * cos.(t), sg.dso * sin.(t), color=:cyan, label="") # source circle
-		plot!(sg.dso * cos.(tmp), sg.dso * sin.(tmp), color=:cyan, label="") # source
-		scatter!(pd[1,:][:], pd[2,:][:], color=:yellow, label="")
+		scatter!(sg.dso * cos.(tmp), sg.dso * sin.(tmp),
+			color=:cyan, markersize=1, label="") # source points
+		scatter!(pd[1,:][:], pd[2,:][:],
+			color=:yellow, markersize=1, label="") # detectors
 
 		plot!([pd[1,1], p0[1], pd[1,end]], [pd[2,1], p0[2], pd[2,end]],
 			color=:red, label="")
-		plot!(sg.rfov * cos.(t), sg.rfov * sin.(t), color=:magenta, label="") # fov circle
 		plot!(title="$(sg.how): dfs = $(sg.dfs)")
 	end
 
-#= todo
-case 'moj'
-	if isvar('ig') && ~isempty(ig)
-		im(ig.x, ig.y, ig.mask(:,:,1))
-		hold on
+	if sg.how == :moj && false
+		t = LinRange(0, 2*pi, 100)
+		rmax = maximum(sg.s)
+		rphi = sg.nb/2 * sg.d ./ (max(abs.(cos.(t)), abs.(sin.(t))))
+		plot!(rphi .* cos.(t), rphi .* sin.(t), label="") # fov circle
+	#	axis([-1 1 -1 1] * max([rmax ig.fov/2]) * 1.1)
 	end
-	t = linspace(0,2*pi,1001)
-	rmax = max(sg.s)
-	rphi = sg.nb/2 * sg.d ./ (max(abs(cos(t)), abs(sin(t))))
-	plot(0, 0, '.', rmax * cos(t), rmax * sin(t), '-') # fov circle
-	plot(0, 0, '.', rphi .* cos(t), rphi .* sin(t), '-m') # fov circle
-	if isvar('ig') && ~isempty(ig)
-		hold off
-	end
-	axis([-1 1 -1 1] * max([rmax ig.fov/2]) * 1.1)
-=#
 
 	plot!()
 end
@@ -587,17 +630,49 @@ end
 
 
 """
+`sino_geom_show()`
+show an example of each of the 4 main geometries
+"""
+function sino_geom_show( ; kwarg...)
+	down = 4
+	ig = image_geom(nx=512, fov=500)
+	ig = ig.down(down)
+
+	arg = (nb = 888, na = down*8)
+	nb_moj = round(Int, ig.nx*down*sqrt(2)) # match rfov
+	sg_list = (
+		sino_geom(:par ; d=ig.fovs[1]/arg.nb, arg..., kwarg...),
+		sino_geom(:moj ; d=1, arg..., nb=nb_moj, kwarg...),
+		sino_geom(:ge1, dfs=0 ; arg..., kwarg...), # arc
+		sino_geom(:ge1, dfs=Inf ; arg..., nb=960, kwarg...), # flat
+		)
+
+	nsg = length(sg_list)
+	pl = Array{Plot}(undef, nsg)
+	for ii = 1:nsg
+		sg = sg_list[ii].down(down)
+		pl[ii] = sino_geom_plot(sg)
+		plot!(pl[ii], xlim=[-1,1]*550, ylim=[-1,1]*550)
+		plot!(pl[ii], xtick=[-1,0,1]*250)
+	end
+	plot(pl...)
+end
+
+
+"""
 `sino_geom_test()`
 """
 function sino_geom_test( ; kwarg...)
-	ig = image_geom(nx=512, fov=500)
+	down = 8
+	ig = image_geom(nx=512, fov=500).down(down)
+	ig = image_geom(nx=ig.nx, dx=ig.dx, mask=ig.circ())
 
 	sg_list = (
-		sino_geom(:par),
-		sino_geom(:moj),
-		sino_geom(:fan, orbit=:short),
-		sino_geom(:ge1, orbit_start=20, dfs=0), # arc
-		sino_geom(:ge1, orbit_start=20, dfs=Inf), # flat
+		sino_geom(:par, down=down, d=4),
+		sino_geom(:moj, down=down, d=4*sqrt(2)),
+		sino_geom(:ge1, down=down, orbit_start=20, dfs=0), # arc
+		sino_geom(:ge1, down=down, orbit_start=20, dfs=Inf), # flat
+		sino_geom(:fan, down=down, orbit=:short),
 		)
 
 	sg_list[1].help
@@ -629,6 +704,7 @@ function sino_geom_test( ; kwarg...)
 		sg.dfs
 		sg.dso
 		sg.grid
+		sg.plot_grid
 
 		sg.d_ang # angular dependent d for :moj
 
@@ -640,14 +716,19 @@ function sino_geom_test( ; kwarg...)
 		pl[ii] = sg.plot(ig=ig)
 	end
 
-	plot(pl...)
+	plot(pl[1:4]...)
 	gui()
 
 	sg = sino_geom(:ge1, orbit=:short)
+	sino_geom_gamma_dfs(sg)
 	display(sg)
 	sino_geom(:show)
+	sino_geom(:help)
+	sino_geom(:plot_grids)
 
+	sino_geom(:ge1, units=:cm)
 	@test_throws String sino_geom(:badhow)
 	@test_throws String sino_geom(:ge1, dfs=-1)
+	@test_throws String sino_geom(:ge1, units=:bad)
 	true
 end
